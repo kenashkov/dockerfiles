@@ -1,5 +1,6 @@
 #Use PHP 7.1 docker image with Apache on Debian Stretch
-FROM kenashkov/php:7.1.33-apache-stretch
+#FROM kenashkov/php:7.1.33-apache-stretch
+FROM php:7.1.33-apache-buster
 
 EXPOSE 80
 EXPOSE 9000
@@ -15,8 +16,10 @@ ENV DEPLOYMENT_IN_CONTAINER=true
 # iconv, pdo, pdo_mysql are already available
 #enable apache mod_rewrite
 RUN apt-get update \
-    && apt-get install -y mc wget netcat git libfreetype6-dev libjpeg62-turbo-dev libpng-dev libxml2-dev unixodbc-dev libmcrypt-dev gnupg inetutils-ping dnsutils telnet screen libzip-dev \
-    && docker-php-ext-install -j$(nproc) gd \
+    && apt-get install -y mc wget netcat git libfreetype6-dev libjpeg62-turbo-dev libpng-dev libxml2-dev unixodbc-dev libmcrypt-dev gnupg inetutils-ping dnsutils telnet screen libzip-dev libcap2-bin build-essential \
+    && apt-get install -y ansible tmux nmap tcpdump
+
+RUN docker-php-ext-install -j$(nproc) gd \
     && docker-php-ext-install -j$(nproc) bcmath \
     && docker-php-ext-install -j$(nproc) mysqli \
     && docker-php-ext-install -j$(nproc) soap \
@@ -37,12 +40,25 @@ RUN apt-get update \
     && docker-php-ext-enable xdebug \
 #    && docker-php-ext-enable sqlsrv \
 #    && docker-php-ext-enable pdo_sqlsrv \
-    && docker-php-ext-enable stats \
-#    && docker-php-ext-enable mcrypt \
-    && a2enmod rewrite \
+    && docker-php-ext-enable stats 
+#    && docker-php-ext-enable mcrypt
+
+RUN a2enmod rewrite \
     && sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
     && sed -i 's/Options FollowSymLinks/Options Indexes MultiViews FollowSymLinks/g' /etc/apache2/apache2.conf \
     && sed -i 's/Options -Indexes/ /g' /etc/apache2/conf-available/docker-php.conf
+
+#install xhprof
+RUN cd /root \
+    && wget https://github.com/tideways/php-xhprof-extension/archive/v5.0.2.tar.gz \
+    && tar -xzvf v5.0.2.tar.gz \
+    && cd ./php-xhprof-extension-5.0.2 \
+    && phpize \
+    && ./configure \
+    && make \
+    && make install \
+    && echo "extension=tideways_xhprof.so" > /usr/local/etc/php/conf.d/docker-php-ext-xhprof.ini
+
 
 # install gcloud
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
@@ -67,12 +83,25 @@ RUN wget https://get.symfony.com/cli/installer -O - | bash \
    && mv /root/.symfony/bin/symfony /usr/local/bin/symfony
 
 # install npm
+RUN apt install -y nodejs npm
 
 # install yarn
+RUN curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - \
+    && echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list \
+    && apt update \
+    && apt install yarn
 
 # install angular
+RUN npm install -g @angular/cli
+
+# install vue
+# npm install -g vue
 
 # install ssh key server
+#no need - run the container with
+# docker run --volume $SSH_AUTH_SOCK:/ssh-agent --env SSH_AUTH_SOCK=/ssh-agent ubuntu ssh-add -l
+#This mounts the host ssh daemon socket and defines the new socket path in the container
+# see https://gist.github.com/d11wtq/8699521
 
 #change the user id and group id of the www-data user and group to match the ones of the host
 #we assume the user on the host that will be running the containers is 1000
@@ -108,7 +137,8 @@ RUN chown --changes --silent --no-dereference --recursive \
     --from=33:33 ${USER_ID}:${GROUP_ID} \
     /home/www-data
 
-RUN apt install -y libcap2-bin
+#moved to the the rest of the packages up in the script
+#RUN apt install -y libcap2-bin
 #we need to allow the Apache binary to listen on a priviledged port (under 1024) when executing as non-root user (www-data)
 #setting the USER to www-data without using setcap will result in na error that apache can not listen on 80
 #this is just a bash script
@@ -121,5 +151,6 @@ WORKDIR "/home/local"
 
 COPY php.ini /usr/local/etc/php/php.ini
 COPY docker-php-ext-xdebug.ini /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
+COPY .bashrc /home/www-data/.bashrc
 
 USER www-data
